@@ -19,6 +19,7 @@ import (
 	"testing/iotest"
 	"time"
 
+	"github.com/mholt/archives"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	diskbufferreader "github.com/trufflesecurity/disk-buffer-reader"
@@ -985,7 +986,7 @@ func TestArchiveDepthCountsContainers(t *testing.T) {
 		t.Helper()
 		var buffer bytes.Buffer
 		switch format {
-		case "tar.gz":
+		case "tar.gz", "tar.gz-decompressor":
 			compressed := gzip.NewWriter(&buffer)
 			archive := tar.NewWriter(compressed)
 			require.NoError(t, archive.WriteHeader(&tar.Header{Name: "content", Mode: 0600, Size: int64(len(content))}))
@@ -1009,7 +1010,7 @@ func TestArchiveDepthCountsContainers(t *testing.T) {
 		return buffer.Bytes()
 	}
 
-	for _, format := range []string{"tar.gz", "zip", "gzip"} {
+	for _, format := range []string{"tar.gz", "tar.gz-decompressor", "zip", "gzip"} {
 		for _, depth := range []int{1, 2, 5} {
 			for _, limit := range []int{depth - 1, depth} {
 				t.Run(fmt.Sprintf("%s/depth=%d/limit=%d", format, depth, limit), func(t *testing.T) {
@@ -1020,6 +1021,10 @@ func TestArchiveDepthCountsContainers(t *testing.T) {
 					maxDepth = limit
 					reader, err := newFileReader(context.Background(), bytes.NewReader(input))
 					require.NoError(t, err)
+					if format == "tar.gz-decompressor" {
+						// Some gzip handlers identify only the compression layer.
+						reader.format = archives.Gz{}
+					}
 					defer func() { require.NoError(t, reader.Close()) }()
 					var content []byte
 					var processingErr error

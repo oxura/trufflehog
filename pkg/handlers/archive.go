@@ -154,10 +154,13 @@ func (h *archiveHandler) openArchive(
 		defer func() { _ = rdr.Close() }()
 
 		nextDepth := depth + 1
-		if _, combined := reader.format.(archives.CompressedArchive); combined {
-			// The compression and archive layers form one container (e.g. tar.gz).
-			// Extraction below will account for that container after decompression.
-			nextDepth = depth
+		if _, extraction := rdr.format.(archives.Extractor); extraction {
+			if _, compression := rdr.format.(archives.Decompressor); !compression {
+				// Compression around an archive is one container, regardless
+				// of which format implementation identified the wrapper.
+				// A nested compressed stream still consumes its own level.
+				nextDepth = depth
+			}
 		}
 		return h.openArchive(ctx, nextDepth, rdr, dataOrErrChan)
 	case archives.Extractor:
