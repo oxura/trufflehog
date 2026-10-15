@@ -396,6 +396,10 @@ trufflehog huggingface --model <model_id> --include-discussions --include-prs
 aws s3 cp s3://example/gzipped/data.gz - | gunzip -c | trufflehog stdin
 ```
 
+Archive depth counts nested containers: a `.tar.gz` file is one level, not a separate
+gzip level followed by a tar level. `--archive-max-depth=5` scans the contents of
+up to five nested archives; a sixth archive is not opened.
+
 # :question: FAQ
 
 - All I see is `🐷🔑🐷  TruffleHog. Unearth your secrets. 🐷🔑🐷` and the program exits, what gives?

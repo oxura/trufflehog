@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"archive/tar"
 	"archive/zip"
 	"bytes"
+	"compress/gzip"
 	stdctx "context"
 	_ "embed"
 	"errors"
@@ -971,5 +973,69 @@ func TestPopulateChunkLineNumber(t *testing.T) {
 			assert.Equal(t, int64(0), originalLine,
 				"original metadata should not be modified, but line is %d", originalLine)
 		})
+	}
+}
+
+func TestArchiveDepthCountsContainers(t *testing.T) {
+	previousDepth := maxDepth
+	t.Cleanup(func() { maxDepth = previousDepth })
+
+	payload := []byte("synthetic archive content\n")
+	wrap := func(content []byte, format string) []byte {
+		t.Helper()
+		var buffer bytes.Buffer
+		switch format {
+		case "tar.gz":
+			compressed := gzip.NewWriter(&buffer)
+			archive := tar.NewWriter(compressed)
+			require.NoError(t, archive.WriteHeader(&tar.Header{Name: "content", Mode: 0600, Size: int64(len(content))}))
+			_, err := archive.Write(content)
+			require.NoError(t, err)
+			require.NoError(t, archive.Close())
+			require.NoError(t, compressed.Close())
+		case "zip":
+			archive := zip.NewWriter(&buffer)
+			member, err := archive.Create("content")
+			require.NoError(t, err)
+			_, err = member.Write(content)
+			require.NoError(t, err)
+			require.NoError(t, archive.Close())
+		case "gzip":
+			compressed := gzip.NewWriter(&buffer)
+			_, err := compressed.Write(content)
+			require.NoError(t, err)
+			require.NoError(t, compressed.Close())
+		}
+		return buffer.Bytes()
+	}
+
+	for _, format := range []string{"tar.gz", "zip", "gzip"} {
+		for _, depth := range []int{1, 2, 5} {
+			for _, limit := range []int{depth - 1, depth} {
+				t.Run(fmt.Sprintf("%s/depth=%d/limit=%d", format, depth, limit), func(t *testing.T) {
+					input := payload
+					for range depth {
+						input = wrap(input, format)
+					}
+					maxDepth = limit
+					reader, err := newFileReader(context.Background(), bytes.NewReader(input))
+					require.NoError(t, err)
+					defer func() { require.NoError(t, reader.Close()) }()
+					var content []byte
+					var processingErr error
+					for result := range newArchiveHandler().HandleFile(context.Background(), reader) {
+						content = append(content, result.Data...)
+						processingErr = errors.Join(processingErr, result.Err)
+					}
+					if limit < depth {
+						require.ErrorIs(t, processingErr, ErrMaxDepthReached)
+						require.Empty(t, content)
+					} else {
+						require.NoError(t, processingErr)
+						require.Equal(t, payload, content)
+					}
+				})
+			}
+		}
 	}
 }

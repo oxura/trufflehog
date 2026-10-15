@@ -21,9 +21,7 @@ const (
 )
 
 var (
-	// NOTE: This is a temporary workaround for |openArchive| incrementing depth twice per archive.
-	// See: https://github.com/trufflesecurity/trufflehog/issues/2942
-	maxDepth   = 5 * 2
+	maxDepth   = 5
 	maxSize    = 2 << 30 // 2 GB
 	maxTimeout = time.Duration(60) * time.Second
 )
@@ -121,16 +119,15 @@ func (h *archiveHandler) openArchive(
 		return ctx.Err()
 	}
 
-	if depth >= maxDepth {
-		h.metrics.incMaxArchiveDepthCount()
-		return ErrMaxDepthReached
-	}
-
 	if reader.format == nil {
 		if depth > 0 {
 			return h.handleNonArchiveContent(ctx, newMimeTypeReaderFromFileReader(reader), dataOrErrChan)
 		}
 		return fmt.Errorf("unknown archive format")
+	}
+	if depth >= maxDepth {
+		h.metrics.incMaxArchiveDepthCount()
+		return ErrMaxDepthReached
 	}
 
 	switch archive := reader.format.(type) {
@@ -156,7 +153,13 @@ func (h *archiveHandler) openArchive(
 		}
 		defer func() { _ = rdr.Close() }()
 
-		return h.openArchive(ctx, depth+1, rdr, dataOrErrChan)
+		nextDepth := depth + 1
+		if _, combined := reader.format.(archives.CompressedArchive); combined {
+			// The compression and archive layers form one container (e.g. tar.gz).
+			// Extraction below will account for that container after decompression.
+			nextDepth = depth
+		}
+		return h.openArchive(ctx, nextDepth, rdr, dataOrErrChan)
 	case archives.Extractor:
 		err := archive.Extract(logContext.WithValue(ctx, depthKey, depth+1), reader, h.extractorHandler(dataOrErrChan))
 		if err != nil {
