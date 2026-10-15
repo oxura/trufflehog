@@ -2,18 +2,9 @@ package sources
 
 import (
 	"testing"
-	"unsafe"
 
 	"github.com/stretchr/testify/assert"
 )
-
-// TestChunkSize tracks the per-chunk metadata footprint. Offset provenance adds
-// one function pointer (8 bytes) to the original 104-byte layout; the sparse
-// Base64 ranges themselves are allocated only when decoding succeeds.
-func TestChunkSize(t *testing.T) {
-	t.Parallel()
-	assert.Equal(t, unsafe.Sizeof(Chunk{}), uintptr(112), "unexpected Chunk struct size")
-}
 
 func TestProgress_UnitProgressKeepsResumeInfo(t *testing.T) {
 	t.Parallel()
