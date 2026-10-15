@@ -52,12 +52,19 @@ func (d *Base64) FromChunk(chunk *sources.Chunk) *DecodableChunk {
 		var result bytes.Buffer
 		result.Grow(len(chunk.Data))
 
+		ranges := make([]base64Range, 0, len(encodedSubstrings))
 		start := 0
 		for _, encoded := range encodedSubstrings {
 			if decoded, ok := decodedSubstrings[encoded]; ok {
 				end := bytes.Index(chunk.Data[start:], []byte(encoded))
 				if end != -1 {
 					result.Write(chunk.Data[start : start+end])
+					ranges = append(ranges, base64Range{
+						decodedStart: result.Len(),
+						decodedEnd:   result.Len() + len(decoded),
+						sourceStart:  start + end,
+						sourceEnd:    start + end + len(encoded),
+					})
 					result.Write(decoded)
 					start += end + len(encoded)
 				}
@@ -65,10 +72,35 @@ func (d *Base64) FromChunk(chunk *sources.Chunk) *DecodableChunk {
 		}
 		result.Write(chunk.Data[start:])
 		chunk.Data = result.Bytes()
+		parentOffset := chunk.SourceOffset
+		chunk.SourceOffset = func(offset int) int {
+			delta := 0
+			for _, span := range ranges {
+				if offset < span.decodedStart {
+					break
+				}
+				if offset < span.decodedEnd {
+					if parentOffset != nil {
+						return parentOffset(span.sourceStart)
+					}
+					return span.sourceStart
+				}
+				delta = span.sourceEnd - span.decodedEnd
+			}
+			if parentOffset != nil {
+				return parentOffset(offset + delta)
+			}
+			return offset + delta
+		}
 		return decodableChunk
 	}
 
 	return nil
+}
+
+type base64Range struct {
+	decodedStart, decodedEnd int
+	sourceStart, sourceEnd   int
 }
 
 func isASCII(b []byte) bool {

@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	aCtx "context"
+	"encoding/base64"
 	"fmt"
 	"math/rand"
 	"net/http"
@@ -2471,5 +2472,37 @@ func BenchmarkFragmentLineOffset_Ambiguous_DefaultChunkSize(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = FragmentLineOffset(chunk, result)
+	}
+}
+
+func TestFragmentLineOffsetBase64Source(t *testing.T) {
+	secret := []byte("synthetic-secret-value-123456")
+	for _, layers := range []int{1, 2, 3} {
+		t.Run(fmt.Sprintf("layers=%d", layers), func(t *testing.T) {
+			encoded := []byte("{\n\"header\":\"value\",\n\"secret\":\"" + string(secret) + "\"\n}")
+			for range layers {
+				encoded = []byte(base64.StdEncoding.EncodeToString(encoded))
+			}
+			input := append([]byte("heading\n\n"), encoded...)
+			input = append(input, []byte(" trufflehog:ignore\n")...)
+			input = append(input, encoded...)
+			input = append(input, []byte("\n"+string(secret))...)
+			chunk := &sources.Chunk{Data: input, OriginalData: input}
+
+			var decoded *sources.Chunk
+			for _, candidate := range iterativeDecode(chunk, []decoders.Decoder{&decoders.Base64{}}, layers) {
+				if bytes.Count(candidate.Data, secret) == 3 {
+					decoded = candidate.Chunk
+				}
+			}
+			require.NotNil(t, decoded)
+			results := []detectors.Result{{Raw: secret}, {Raw: secret}, {Raw: secret}}
+			AssignDuplicateLineOffsets(decoded, results)
+			for i, want := range []int64{2, 3, 4} {
+				line, ignored := FragmentLineOffset(decoded, &results[i])
+				require.Equal(t, want, line)
+				require.Equal(t, i == 0, ignored)
+			}
+		})
 	}
 }

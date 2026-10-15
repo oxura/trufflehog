@@ -882,13 +882,14 @@ type verificationOverlapChunk struct {
 func iterativeDecode(chunk *sources.Chunk, allDecoders []decoders.Decoder, maxDepth int) []*decoders.DecodableChunk {
 	var results []*decoders.DecodableChunk
 
-	currentInputs := [][]byte{chunk.Data}
+	currentInputs := []*sources.Chunk{chunk}
 	var seen [][]byte
 
 	for depth := 0; depth < maxDepth; depth++ {
-		var nextInputs [][]byte
+		var nextInputs []*sources.Chunk
 
-		for _, data := range currentInputs {
+		for _, input := range currentInputs {
+			data := input.Data
 			for _, decoder := range allDecoders {
 				// The PLAIN (UTF-8) decoder always returns non-nil and only transforms
 				// invalid UTF-8 via extractSubstrings. All other decoders already produce
@@ -898,11 +899,15 @@ func iterativeDecode(chunk *sources.Chunk, allDecoders []decoders.Decoder, maxDe
 					continue
 				}
 
-				chunkCopy := *chunk
-				chunkCopy.Data = data
+				chunkCopy := *input
 				decoded := decoder.FromChunk(&chunkCopy)
 				if decoded == nil {
 					continue
+				}
+				// A decoder without offset provenance must not retain a map for
+				// the previous byte layout.
+				if decoder.Type() != detectorspb.DecoderType_BASE64 && !bytes.Equal(decoded.Data, data) {
+					decoded.SourceOffset = nil
 				}
 
 				results = append(results, decoded)
@@ -913,7 +918,7 @@ func iterativeDecode(chunk *sources.Chunk, allDecoders []decoders.Decoder, maxDe
 					!slices.ContainsFunc(seen, func(s []byte) bool { return bytes.Equal(s, decoded.Data) }) {
 
 					seen = append(seen, decoded.Data)
-					nextInputs = append(nextInputs, decoded.Data)
+					nextInputs = append(nextInputs, decoded.Chunk)
 				}
 			}
 		}
@@ -1494,7 +1499,13 @@ func FragmentLineOffset(chunk *sources.Chunk, result *detectors.Result) (int64, 
 	}
 
 	data := chunk.Data
-	if originalOffset := sourceOffset(chunk.OriginalData, chunk.Data, offset, len(secretBytes)); originalOffset >= 0 {
+	originalOffset := -1
+	if chunk.SourceOffset != nil {
+		originalOffset = chunk.SourceOffset(offset)
+	} else {
+		originalOffset = sourceOffset(chunk.OriginalData, chunk.Data, offset, len(secretBytes))
+	}
+	if len(chunk.OriginalData) > 0 && originalOffset >= 0 && originalOffset <= len(chunk.OriginalData) {
 		data, offset = chunk.OriginalData, originalOffset
 	}
 
@@ -1502,7 +1513,7 @@ func FragmentLineOffset(chunk *sources.Chunk, result *detectors.Result) (int64, 
 	result.SetPrimarySecretLine(lineNumber)
 
 	// If the line containing the secret has the ignore tag, we should ignore the result.
-	after := data[offset+len(secretBytes):]
+	after := data[min(offset+len(secretBytes), len(data)):]
 	endLine := bytes.Index(after, []byte("\n"))
 	if endLine == -1 {
 		endLine = len(after)

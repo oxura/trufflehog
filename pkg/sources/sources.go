@@ -27,6 +27,9 @@ type Chunk struct {
 	// storage. Set before iterative decoding so it retains the original
 	// content even after Data is replaced with decoded forms.
 	OriginalData []byte
+	// SourceOffset maps decoded byte offsets to OriginalData. A decoded token
+	// maps to the beginning of its encoded representation.
+	SourceOffset func(int) int `json:"-"`
 
 	// SourceName is the name of the Source that produced the chunk.
 	SourceName string

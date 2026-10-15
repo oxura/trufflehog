@@ -409,6 +409,9 @@ aws s3 cp s3://example/gzipped/data.gz - | gunzip -c | trufflehog stdin
 - Can I find secrets with `trufflehog:ignore` included?
   - Pass `--no-ignore-tag` to report results even when their line carries a `trufflehog:ignore` comment. This is useful for reviewing previously accepted findings.
 
+- Which line is reported for a Base64-encoded secret?
+  - The line containing the encoded value in the source, not a line introduced by decoding that value. This also applies to nested Base64 encoding.
+
 # :newspaper: What's new in v3?
 
 TruffleHog v3 is a complete rewrite in Go with many new powerful features.
