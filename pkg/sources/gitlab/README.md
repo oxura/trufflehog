@@ -10,6 +10,10 @@ The GitLab source lets TruffleHog scan GitLab projects for secrets, credentials,
 
 This source finds projects through the GitLab API (by an explicit list, by group, or by listing everything the account can see), then clones and scans each project the same way the git source does.
 
+When enumerating projects, the source skips projects whose Repository feature is
+disabled or whose API response has no clone URL. These projects have no repository
+to scan and do not cause clone failures for an instance or group scan.
+
 ### Key GitLab Terminology
 
 | Term | Description |

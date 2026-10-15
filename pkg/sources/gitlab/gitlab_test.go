@@ -1,13 +1,21 @@
 package gitlab
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/hashicorp/golang-lru/v2/expirable"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	gitlab "gitlab.com/gitlab-org/api/client-go"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/trufflesecurity/trufflehog/v3/pkg/context"
+	"github.com/trufflesecurity/trufflehog/v3/pkg/sources"
 	"github.com/trufflesecurity/trufflehog/v3/pkg/sources/git"
 )
 
@@ -184,6 +192,83 @@ func Test_normalizeGitlabEndpoint(t *testing.T) {
 			output, err := normalizeGitlabEndpoint(tc.inputEndpoint)
 			assert.Equal(t, tc.outputEndpoint, output)
 			assert.Equal(t, tc.wantErr, err != nil)
+		})
+	}
+}
+
+func TestEnumerationSkipsProjectsWithoutRepositories(t *testing.T) {
+	projects := []*gitlab.Project{
+		{ID: 1, HTTPURLToRepo: "https://gitlab.example.invalid/group/disabled.git", RepositoryAccessLevel: gitlab.DisabledAccessControl},
+		{ID: 2, HTTPURLToRepo: ""},
+		{ID: 3, HTTPURLToRepo: "https://gitlab.example.invalid/group/enabled.git", RepositoryAccessLevel: gitlab.EnabledAccessControl},
+		{ID: 4, HTTPURLToRepo: "https://gitlab.example.invalid/group/private.git", RepositoryAccessLevel: gitlab.PrivateAccessControl},
+		// Simplified API responses may omit repository_access_level.
+		{ID: 5, HTTPURLToRepo: "https://gitlab.example.invalid/group/available.git"},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var response any
+		switch {
+		case r.URL.Path == "/api/v4/user":
+			response = map[string]any{"id": 1}
+		case r.URL.Path == "/api/v4/groups":
+			response = []map[string]any{{"id": 10}}
+		case strings.HasSuffix(r.URL.Path, "/projects"):
+			response = projects
+			if r.URL.Query().Get("simple") == "true" {
+				basic := make([]map[string]any, 0, len(projects))
+				for _, project := range projects {
+					basic = append(basic, map[string]any{
+						"id": project.ID, "http_url_to_repo": project.HTTPURLToRepo,
+					})
+				}
+				response = basic
+			}
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			t.Error(err)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client, err := gitlab.NewClient("offline-fixture", gitlab.WithBaseURL(server.URL))
+	require.NoError(t, err)
+
+	for _, mode := range []string{"legacy", "simplified", "group"} {
+		t.Run(mode, func(t *testing.T) {
+			source := &Source{
+				url: server.URL, projectsPerPage: 100, groupIds: []string{"10"},
+				projectMetadataCache: expirable.NewLRU[string, *projectMetadata](8, nil, 0),
+			}
+			var units []string
+			var enumerationErrors []error
+			reporter := sources.VisitorReporter{
+				VisitUnit: func(_ context.Context, unit sources.SourceUnit) error {
+					id, _ := unit.SourceUnitID()
+					units = append(units, id)
+					return nil
+				},
+				VisitErr: func(_ context.Context, err error) error {
+					enumerationErrors = append(enumerationErrors, err)
+					return nil
+				},
+			}
+			ignore := func(string) bool { return false }
+			switch mode {
+			case "legacy":
+				err = source.getAllProjectRepos(context.Background(), client, ignore, reporter)
+			case "simplified":
+				err = source.getAllProjectReposV2(context.Background(), client, ignore, reporter)
+			case "group":
+				err = source.getAllProjectReposInGroups(context.Background(), client, ignore, reporter)
+			}
+			require.NoError(t, err)
+			require.Empty(t, enumerationErrors)
+			require.ElementsMatch(t, []string{
+				projects[2].HTTPURLToRepo, projects[3].HTTPURLToRepo, projects[4].HTTPURLToRepo,
+			}, units)
 		})
 	}
 }

@@ -595,6 +595,10 @@ func (s *Source) getAllProjectRepos(
 			}
 			// Record that we've seen this project.
 			uniqueProjects[proj.ID] = proj
+			if proj.RepositoryAccessLevel == gitlab.DisabledAccessControl || proj.HTTPURLToRepo == "" {
+				ctx.Logger().V(3).Info("skipping project", "reason", "repository disabled or unavailable")
+				continue
+			}
 			// Report an error if we could not convert the project into a URL.
 			if _, err := url.Parse(proj.HTTPURLToRepo); err != nil {
 				ctx.Logger().V(3).Info("skipping project",
@@ -742,10 +746,10 @@ func (s *Source) getAllProjectReposV2(
 		Sort:    "asc",
 	}
 
+	// The simple representation omits repository_access_level, so request
+	// project metadata to distinguish a disabled Repository feature.
 	projectQueryOptions := &gitlab.ListProjectsOptions{
 		ListOptions: listOpts,
-		// Return only limited fields for each project
-		Simple: gitlab.Ptr(true),
 	}
 
 	// for gitlab.com instance, include only projects where the user is a member.
@@ -789,6 +793,10 @@ func (s *Source) getAllProjectReposV2(
 			if ignoreRepo(project.PathWithNamespace) {
 				projCtx.Logger().V(3).Info("skipping project", "reason", "ignored in config")
 
+				continue
+			}
+			if project.RepositoryAccessLevel == gitlab.DisabledAccessControl || project.HTTPURLToRepo == "" {
+				projCtx.Logger().V(3).Info("skipping project", "reason", "repository disabled or unavailable")
 				continue
 			}
 
@@ -908,6 +916,10 @@ func (s *Source) getAllProjectReposInGroups(
 				// skip projects configured to be ignored.
 				if ignoreRepo(proj.PathWithNamespace) {
 					projCtx.Logger().V(3).Info("skipping project", "reason", "ignored in config")
+					continue
+				}
+				if proj.RepositoryAccessLevel == gitlab.DisabledAccessControl || proj.HTTPURLToRepo == "" {
+					projCtx.Logger().V(3).Info("skipping project", "reason", "repository disabled or unavailable")
 					continue
 				}
 
