@@ -396,6 +396,9 @@ trufflehog huggingface --model <model_id> --include-discussions --include-prs
 aws s3 cp s3://example/gzipped/data.gz - | gunzip -c | trufflehog stdin
 ```
 
+Filesystem archive scanning reads every concatenated gzip member and tolerates
+non-gzip trailing data. Corrupted gzip members still produce a scan error.
+
 # :question: FAQ
 
 - All I see is `🐷🔑🐷  TruffleHog. Unearth your secrets. 🐷🔑🐷` and the program exits, what gives?

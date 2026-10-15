@@ -150,6 +150,15 @@ func newFileReader(ctx context.Context, r io.Reader) (fReader fileReader, err er
 		return fReader, nil
 	}
 
+	// Identify probes decompressed content using a strict multistream reader.
+	// Route gzip directly so trailing non-gzip data cannot make that probe
+	// reject an otherwise readable member before any content is scanned.
+	if mime.String() == "application/gzip" {
+		fReader.isGenericArchive = true
+		fReader.format = gzipFormat{}
+		return fReader, nil
+	}
+
 	var format archives.Format
 	format, _, err = archives.Identify(ctx, "", fReader)
 	switch {
